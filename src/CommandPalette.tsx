@@ -78,9 +78,23 @@ export const CommandPalette: React.FC = () => {
       const data = await response.json();
       console.log('Agent response:', data);
 
-      if (response.ok && data.response) {
-        const assistantMessage: Message = { role: 'assistant', content: data.response };
-        setMessages(prev => [...prev, assistantMessage]);
+      if (response.ok && data.result) {
+        const { type, payload } = data.result;
+
+        switch (type) {
+          case 'respond':
+            const assistantMessage: Message = { role: 'assistant', content: payload.response };
+            setMessages(prev => [...prev, assistantMessage]);
+            break;
+          case 'changeBackgroundColor':
+            document.body.style.backgroundColor = payload.color;
+            const actionMessage: Message = { role: 'assistant', content: `Ok, I've changed the background to ${payload.color}` };
+            setMessages(prev => [...prev, actionMessage]);
+            break;
+          default:
+            const defaultMessage: Message = { role: 'assistant', content: "I'm not sure how to handle that action." };
+            setMessages(prev => [...prev, defaultMessage]);
+        }
       } else {
         const errorMessage: Message = { role: 'assistant', content: data.error || "Failed to get response" };
         setMessages(prev => [...prev, errorMessage]);

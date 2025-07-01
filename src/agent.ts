@@ -22,11 +22,11 @@ interface ChatMemory {
     content: string;
     timestamp: number;
   }>;
-  lastResponse?: string;
+  lastResponse?: any; // Can be string or action result
 }
 
-// Store for API responses
-const responseStore = new Map<string, string>();
+// Store for API responses - now holds structured data
+const responseStore = new Map<string, any>();
 
 // Create chat context with proper memory typing
 const chatContext = context<ChatMemory>({
@@ -78,11 +78,12 @@ const respondAction = action<any, any, ChatMemory>({
   }),
   handler: async ({ response, sessionId }, ctx) => {
     // Store the response for retrieval
-    responseStore.set(sessionId, response);
+    const result = { type: 'respond', payload: { response } };
+    responseStore.set(sessionId, result);
     
     // Update context memory
     if (ctx.memory) {
-      ctx.memory.lastResponse = response;
+      ctx.memory.lastResponse = result;
       ctx.memory.messages.push({
         role: "assistant",
         content: response,
@@ -94,11 +95,28 @@ const respondAction = action<any, any, ChatMemory>({
   },
 });
 
+const changeBackgroundColorAction = action({
+  name: "changeBackgroundColor",
+  description: "Change the background color of the page.",
+  schema: z.object({
+    color: z.string().describe("The CSS color to set the background to (e.g., 'blue', '#ff0000')."),
+  }),
+  handler: async ({ color }, ctx) => {
+    const result = { type: 'changeBackgroundColor', payload: { color } };
+    // Assuming a sessionId is available in the context memory
+    if (ctx.memory?.sessionId) {
+      responseStore.set(ctx.memory.sessionId, result);
+      return { success: true, message: `Changed background color to ${color}` };
+    }
+    return { success: false, message: "Session ID not found." };
+  },
+});
+
 // Create the agent
 const agent = createDreams({
   model: openrouter("openai/gpt-4o"),
   contexts: [chatContext],
-  actions: [respondAction],
+  actions: [respondAction, changeBackgroundColorAction],
 });
 
 // Initialize the agent
@@ -112,7 +130,7 @@ export async function initializeAgent() {
 }
 
 // Handle chat messages using Daydreams
-export async function handleChatMessage(sessionId: string, message: string): Promise<string> {
+export async function handleChatMessage(sessionId: string, message: string): Promise<any> {
   try {
     // Clear previous response
     responseStore.delete(sessionId);
@@ -128,16 +146,16 @@ export async function handleChatMessage(sessionId: string, message: string): Pro
     });
     
     // Get the response from the store
-    const response = responseStore.get(sessionId);
-    if (response) {
+    const result = responseStore.get(sessionId);
+    if (result) {
       responseStore.delete(sessionId);
-      return response;
+      return result;
     }
     
     // Fallback if no response was generated
-    return "I'm sorry, I couldn't process your message. Please try again.";
+    return { type: 'respond', payload: { response: "I'm sorry, I couldn't process your message. Please try again." }};
   } catch (error) {
     console.error("Error handling chat message:", error);
-    return "An error occurred while processing your message. Please ensure your OPENROUTER_API_KEY is set correctly in your .env file.";
+    return { type: 'respond', payload: { response: "An error occurred while processing your message." }};
   }
 }

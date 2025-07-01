@@ -23,10 +23,10 @@ const server = serve({
             );
           }
 
-          const response = await handleChatMessage(sessionId, message);
+          const result = await handleChatMessage(sessionId, message);
           
           return Response.json({
-            response,
+            result,
             sessionId,
           });
         } catch (error) {
