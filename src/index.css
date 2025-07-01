@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Kalam:wght@300;400;700&display=swap');
 @import "../styles/globals.css";
 
 @layer base {
@@ -6,30 +7,151 @@
   }
 
   body {
-    @apply grid place-items-center min-w-[320px] min-h-screen relative m-0 bg-background text-foreground;
+    @apply min-w-[320px] min-h-screen relative m-0 bg-black text-foreground overflow-hidden;
   }
 }
 
-/* cool Bun background animation 😎 */
-body::before {
-  content: "";
+/* Starfield background */
+.starfield-container {
   position: fixed;
   inset: 0;
-  z-index: -1;
-  opacity: 0.05;
-  background: url("./logo.svg");
-  background-size: 256px;
-  transform: rotate(-12deg) scale(1.35);
-  animation: slide 30s linear infinite;
-  pointer-events: none;
+  background: #000;
+  overflow: hidden;
 }
 
-@keyframes slide {
-  from {
-    background-position: 0 0;
+.starfield {
+  position: absolute;
+  inset: 0;
+  background: transparent;
+}
+
+.starfield::before,
+.starfield::after {
+  content: '';
+  position: absolute;
+  width: 200%;
+  height: 200%;
+  top: -50%;
+  left: -50%;
+  background: 
+    radial-gradient(1px 1px at 20% 10%, white, transparent),
+    radial-gradient(2px 2px at 80% 20%, white, transparent),
+    radial-gradient(1px 1px at 40% 30%, white, transparent),
+    radial-gradient(1px 1px at 90% 40%, white, transparent),
+    radial-gradient(2px 2px at 10% 50%, white, transparent),
+    radial-gradient(1px 1px at 60% 60%, white, transparent),
+    radial-gradient(2px 2px at 30% 70%, white, transparent),
+    radial-gradient(1px 1px at 70% 80%, white, transparent),
+    radial-gradient(1px 1px at 50% 90%, white, transparent),
+    radial-gradient(2px 2px at 25% 15%, white, transparent),
+    radial-gradient(1px 1px at 75% 25%, white, transparent),
+    radial-gradient(1px 1px at 45% 35%, white, transparent),
+    radial-gradient(2px 2px at 85% 45%, white, transparent),
+    radial-gradient(1px 1px at 15% 55%, white, transparent),
+    radial-gradient(1px 1px at 65% 65%, white, transparent),
+    radial-gradient(2px 2px at 35% 75%, white, transparent),
+    radial-gradient(1px 1px at 95% 85%, white, transparent),
+    radial-gradient(1px 1px at 55% 95%, white, transparent),
+    radial-gradient(2px 2px at 5% 5%, white, transparent),
+    radial-gradient(1px 1px at 85% 15%, white, transparent),
+    radial-gradient(1px 1px at 15% 25%, white, transparent),
+    radial-gradient(2px 2px at 65% 35%, white, transparent),
+    radial-gradient(1px 1px at 35% 45%, white, transparent),
+    radial-gradient(1px 1px at 95% 55%, white, transparent),
+    radial-gradient(2px 2px at 25% 65%, white, transparent),
+    radial-gradient(1px 1px at 75% 75%, white, transparent),
+    radial-gradient(1px 1px at 45% 85%, white, transparent),
+    radial-gradient(2px 2px at 5% 95%, white, transparent),
+    radial-gradient(1px 1px at 55% 5%, white, transparent),
+    radial-gradient(1px 1px at 35% 15%, white, transparent),
+    radial-gradient(2px 2px at 75% 25%, white, transparent),
+    radial-gradient(1px 1px at 15% 35%, white, transparent),
+    radial-gradient(1px 1px at 85% 45%, white, transparent),
+    radial-gradient(2px 2px at 55% 55%, white, transparent),
+    radial-gradient(1px 1px at 25% 65%, white, transparent),
+    radial-gradient(1px 1px at 95% 75%, white, transparent),
+    radial-gradient(2px 2px at 65% 85%, white, transparent),
+    radial-gradient(1px 1px at 5% 25%, white, transparent),
+    radial-gradient(1px 1px at 45% 45%, white, transparent),
+    radial-gradient(2px 2px at 85% 65%, white, transparent),
+    radial-gradient(1px 1px at 25% 85%, white, transparent),
+    radial-gradient(1px 1px at 75% 5%, white, transparent),
+    radial-gradient(2px 2px at 15% 45%, white, transparent),
+    radial-gradient(1px 1px at 95% 25%, white, transparent),
+    radial-gradient(1px 1px at 35% 65%, white, transparent),
+    radial-gradient(2px 2px at 85% 85%, white, transparent),
+    radial-gradient(1px 1px at 5% 15%, white, transparent),
+    radial-gradient(1px 1px at 65% 45%, white, transparent),
+    radial-gradient(2px 2px at 45% 75%, white, transparent),
+    radial-gradient(1px 1px at 25% 5%, white, transparent);
+  background-size: 100vw 100vh;
+  animation: starfloat 120s linear infinite;
+  opacity: 0.9;
+}
+
+.starfield::after {
+  background: 
+    radial-gradient(1px 1px at 30% 20%, white, transparent),
+    radial-gradient(2px 2px at 70% 40%, white, transparent),
+    radial-gradient(1px 1px at 10% 60%, white, transparent),
+    radial-gradient(1px 1px at 90% 80%, white, transparent),
+    radial-gradient(2px 2px at 50% 10%, white, transparent),
+    radial-gradient(1px 1px at 20% 90%, white, transparent),
+    radial-gradient(2px 2px at 80% 30%, white, transparent),
+    radial-gradient(1px 1px at 60% 70%, white, transparent),
+    radial-gradient(1px 1px at 40% 50%, white, transparent),
+    radial-gradient(2px 2px at 15% 35%, white, transparent),
+    radial-gradient(1px 1px at 85% 55%, white, transparent),
+    radial-gradient(1px 1px at 55% 75%, white, transparent),
+    radial-gradient(2px 2px at 35% 95%, white, transparent),
+    radial-gradient(1px 1px at 75% 15%, white, transparent),
+    radial-gradient(1px 1px at 5% 35%, white, transparent),
+    radial-gradient(2px 2px at 95% 65%, white, transparent),
+    radial-gradient(1px 1px at 25% 25%, white, transparent),
+    radial-gradient(1px 1px at 65% 85%, white, transparent),
+    radial-gradient(2px 2px at 45% 5%, white, transparent),
+    radial-gradient(1px 1px at 15% 75%, white, transparent),
+    radial-gradient(1px 1px at 85% 35%, white, transparent),
+    radial-gradient(2px 2px at 55% 95%, white, transparent),
+    radial-gradient(1px 1px at 35% 55%, white, transparent),
+    radial-gradient(1px 1px at 75% 85%, white, transparent),
+    radial-gradient(2px 2px at 5% 45%, white, transparent),
+    radial-gradient(1px 1px at 95% 15%, white, transparent),
+    radial-gradient(1px 1px at 25% 75%, white, transparent),
+    radial-gradient(2px 2px at 65% 25%, white, transparent),
+    radial-gradient(1px 1px at 45% 65%, white, transparent),
+    radial-gradient(1px 1px at 15% 85%, white, transparent),
+    radial-gradient(2px 2px at 85% 5%, white, transparent),
+    radial-gradient(1px 1px at 55% 45%, white, transparent),
+    radial-gradient(1px 1px at 35% 25%, white, transparent),
+    radial-gradient(2px 2px at 75% 65%, white, transparent),
+    radial-gradient(1px 1px at 5% 85%, white, transparent),
+    radial-gradient(1px 1px at 95% 45%, white, transparent),
+    radial-gradient(2px 2px at 25% 15%, white, transparent),
+    radial-gradient(1px 1px at 65% 55%, white, transparent),
+    radial-gradient(1px 1px at 45% 95%, white, transparent),
+    radial-gradient(2px 2px at 15% 25%, white, transparent),
+    radial-gradient(1px 1px at 85% 75%, white, transparent),
+    radial-gradient(1px 1px at 55% 35%, white, transparent),
+    radial-gradient(2px 2px at 35% 85%, white, transparent),
+    radial-gradient(1px 1px at 75% 45%, white, transparent),
+    radial-gradient(1px 1px at 5% 65%, white, transparent),
+    radial-gradient(2px 2px at 95% 25%, white, transparent),
+    radial-gradient(1px 1px at 25% 95%, white, transparent),
+    radial-gradient(1px 1px at 65% 15%, white, transparent),
+    radial-gradient(2px 2px at 45% 55%, white, transparent),
+    radial-gradient(1px 1px at 15% 75%, white, transparent);
+  background-size: 100vw 100vh;
+  animation: starfloat 200s linear infinite reverse;
+  opacity: 0.7;
+}
+
+@keyframes starfloat {
+  0% {
+    transform: translateY(0) rotate(0deg);
   }
-  to {
-    background-position: 256px 224px;
+  100% {
+    transform: translateY(-100vh) rotate(360deg);
   }
 }
 
@@ -39,6 +161,57 @@ body::before {
   }
   to {
     transform: rotate(360deg);
+  }
+}
+
+/* Glass board animations */
+@keyframes fade-in-0 {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes zoom-in-95 {
+  from {
+    transform: scale(0.95);
+  }
+  to {
+    transform: scale(1);
+  }
+}
+
+.animate-in {
+  animation-fill-mode: both;
+}
+
+.fade-in-0 {
+  animation-name: fade-in-0;
+}
+
+.zoom-in-95 {
+  animation-name: zoom-in-95;
+}
+
+.duration-300 {
+  animation-duration: 300ms;
+}
+
+/* Pulsing border effect */
+.pulse-border {
+  animation: border-pulse 3s ease-in-out infinite;
+}
+
+@keyframes border-pulse {
+  0%, 100% {
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+  }
+  50% {
+    border-color: rgba(255, 255, 255, 0.2);
+    box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.05);
   }
 }
 

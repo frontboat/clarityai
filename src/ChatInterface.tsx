@@ -11,11 +11,14 @@ interface Message {
   timestamp: Date;
 }
 
-export function ChatInterface() {
-  const [messages, setMessages] = useState<Message[]>([]);
+interface ChatInterfaceProps {
+  messages: Message[];
+  onSendMessage: (message: string) => void;
+  isLoading: boolean;
+}
+
+export function ChatInterface({ messages, onSendMessage, isLoading }: ChatInterfaceProps) {
   const [input, setInput] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
-  const [sessionId] = useState(() => `session-${Date.now()}`);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -31,51 +34,8 @@ export function ChatInterface() {
     
     if (!input.trim() || isLoading) return;
 
-    const userMessage: Message = {
-      role: "user",
-      content: input.trim(),
-      timestamp: new Date(),
-    };
-
-    setMessages(prev => [...prev, userMessage]);
+    onSendMessage(input.trim());
     setInput("");
-    setIsLoading(true);
-
-    try {
-      const response = await fetch("/api/chat", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          sessionId,
-          message: userMessage.content,
-        }),
-      });
-
-      const data = await response.json();
-
-      if (response.ok && data.response) {
-        const assistantMessage: Message = {
-          role: "assistant",
-          content: data.response,
-          timestamp: new Date(),
-        };
-        setMessages(prev => [...prev, assistantMessage]);
-      } else {
-        throw new Error(data.error || "Failed to get response");
-      }
-    } catch (error) {
-      console.error("Chat error:", error);
-      const errorMessage: Message = {
-        role: "assistant",
-        content: "Sorry, I encountered an error. Please try again.",
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
-    }
   };
 
   return (
