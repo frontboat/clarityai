@@ -1,6 +1,10 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides comprehensive guidance to Claude Code (claude.ai/code) when working with the ClarityAI codebase.
+
+## Project Overview
+
+ClarityAI is a modern AI-powered chat application built with a **Bun-first** approach, leveraging cutting-edge web technologies for optimal performance and developer experience.
 
 ## Technology Stack
 
@@ -11,6 +15,7 @@ This is a **Bun-first** web application. Always use Bun instead of Node.js, npm,
 - **Server**: Bun.serve() with built-in routing and WebSocket support
 - **AI Framework**: Daydreams AI Core + OpenRouter (AI SDK Provider)
 - **Build**: Bun's built-in bundler (no Vite/Webpack needed)
+- **Package Manager**: Bun (never use npm/yarn/pnpm)
 
 ## Essential Commands
 
@@ -113,6 +118,13 @@ OPENROUTER_API_KEY=your_openrouter_api_key_here
 
 Get your API key from: https://openrouter.ai/keys
 
+### Development Setup
+1. Clone the repository
+2. Copy `.env.example` to `.env` and add your OpenRouter API key
+3. Install dependencies with `bun install`
+4. Start development server with `bun dev`
+5. Open http://localhost:3000 in your browser
+
 ## Adding New Features
 
 ### API Endpoints
@@ -155,3 +167,64 @@ websocket: {
 - Prefer Bun's built-in APIs over third-party packages
 - The project uses Tailwind CSS v4 (not v3) with CSS variables
 - shadcn/ui components are already configured and ready to use
+
+## Code Style Guidelines
+
+### TypeScript Best Practices
+- Use explicit types for function parameters and return values
+- Prefer interfaces over type aliases for object shapes
+- Use const assertions for literal types
+- Enable strict TypeScript checking
+
+### React Patterns
+- Use functional components with hooks
+- Implement proper error boundaries
+- Use React.memo for performance optimization where needed
+- Follow React 19's concurrent features
+
+### File Naming Conventions
+- Components: PascalCase (e.g., `ChatInterface.tsx`)
+- Utilities: camelCase (e.g., `formatMessage.ts`)
+- Types/Interfaces: PascalCase with descriptive names
+- API routes: kebab-case in URL paths
+
+## Common Tasks
+
+### Adding a New API Endpoint
+1. Add route handler to `src/index.tsx`
+2. Define TypeScript types for request/response
+3. Implement error handling with proper status codes
+4. Add corresponding frontend API client function
+
+### Creating a New UI Component
+1. Create component file in appropriate directory
+2. Follow shadcn/ui patterns for consistency
+3. Use Tailwind CSS v4 classes
+4. Export from component index if needed
+
+### Modifying AI Agent Behavior
+1. Update agent configuration in `src/agent.ts`
+2. Adjust model selection or parameters
+3. Modify context instructions for personality
+4. Test with various prompts
+
+## Troubleshooting
+
+### Common Issues
+- **Hot reload not working**: Ensure `bun dev` is running
+- **TypeScript errors**: Run `bun tsc --noEmit` to check
+- **Build failures**: Check for missing dependencies with `bun install`
+- **API errors**: Verify `.env` file contains valid OPENROUTER_API_KEY
+
+### Performance Optimization
+- Use Bun's built-in bundler optimizations
+- Implement code splitting for large components
+- Leverage React 19's automatic batching
+- Use CSS-in-JS sparingly, prefer Tailwind classes
+
+## Security Considerations
+- Never commit `.env` files or API keys
+- Validate all user inputs on the server
+- Use environment variables for sensitive configuration
+- Implement rate limiting for API endpoints
+- Sanitize AI responses before rendering
