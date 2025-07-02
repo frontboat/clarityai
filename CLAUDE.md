@@ -6,6 +6,11 @@ This file provides comprehensive guidance to Claude Code (claude.ai/code) when w
 
 ClarityAI is a modern AI-powered chat application built with a **Bun-first** approach, leveraging cutting-edge web technologies for optimal performance and developer experience.
 
+### Project Status
+- **Current Branch**: `testing` (main branch: `main`)
+- **Core Architecture**: Daydreams AI Core with basic chat agent
+- **UI**: Glass-morphism interface with starfield background and global hotkeys
+
 ## Technology Stack
 
 This is a **Bun-first** web application. Always use Bun instead of Node.js, npm, yarn, or pnpm.
@@ -47,6 +52,13 @@ bun <file.ts>
 - Initializes Daydreams AI agent on startup
 - API routes pattern: `/api/*`
 
+### UI Interaction Model
+- **Starfield Background**: Animated starfield with activation prompt
+- **Global Hotkey**: Ctrl+Space to activate the GlassBoard interface
+- **GlassBoard Overlay**: Glass-morphism design with chat interface
+- **Session Management**: Persistent chat sessions with unique session IDs
+- **Real-time Messaging**: Fetch-based API communication with loading states
+
 ### AI Chat API (`src/agent.ts`)
 - Built with Daydreams AI Core framework
 - Uses OpenRouter as the LLM provider (configured for OpenAI GPT-4)
@@ -59,10 +71,12 @@ bun <file.ts>
 ### Frontend Structure
 - **Entry**: `src/index.html` imports `src/frontend.tsx`
 - **React Bootstrap**: `src/frontend.tsx` mounts React to `#root`
-- **Main App**: `src/App.tsx` - primary React component
+- **Main App**: `src/App.tsx` - primary React component with GlassBoard interface
 - **Chat Interface**: `src/ChatInterface.tsx` - AI chat UI component
-- **Components**: `src/components/ui/*` - shadcn/ui components
-- **Styling**: Tailwind CSS v4 with CSS variables
+- **GlassBoard**: `src/components/GlassBoard.tsx` - Modern glass-morphism UI overlay
+- **Global Hotkeys**: `src/hooks/useGlobalHotkey.ts` - Ctrl+Space to activate interface
+- **Components**: `src/components/ui/*` - shadcn/ui components (Button, Card, Form, Input, etc.)
+- **Styling**: Tailwind CSS v4 with CSS variables and starfield background animation
 
 ### Build System (`build.ts`)
 - Custom build script with CLI options

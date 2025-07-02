@@ -1,8 +1,22 @@
 import { serve } from "bun";
 import index from "./index.html";
-import { initializeAgent, handleChatMessage } from "./agent";
+import { initializeAgent, handleChatMessage, setAgentConfig } from "./agent";
 
-// Initialize the agent when server starts
+// Environment check and configuration
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+if (!OPENROUTER_API_KEY) {
+  console.error("OPENROUTER_API_KEY is required. Please set it in your .env file.");
+  process.exit(1);
+}
+
+const OPENROUTER_MODEL = process.env.OPENROUTER_MODEL || "anthropic/claude-4-sonnet-20250219";
+
+// Configure and initialize the agent
+setAgentConfig({
+  apiKey: OPENROUTER_API_KEY,
+  model: OPENROUTER_MODEL,
+});
+
 initializeAgent().catch(console.error);
 
 const server = serve({
