@@ -1,6 +1,6 @@
 import { serve } from "bun";
 import index from "./index.html";
-import { initializeAgent, handleChatMessage, setAgentConfig, getUICommands, getCurrentUIState, adaptiveVideoAgent } from "./agent";
+import { initializeAgent, handleChatMessage, setAgentConfig, getUICommands, getCurrentUIState } from "./agent";
 
 // Environment check and configuration
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
@@ -62,81 +62,6 @@ const server = serve({
         } catch (error) {
           console.error("UI state error:", error);
           return new Response(JSON.stringify({}), { status: 500 });
-        }
-      },
-    },
-
-    "/api/agent/learn-behavior": {
-      async POST(req) {
-        try {
-          const body = await req.json();
-          const { action, feature, duration, context } = body;
-          
-          const result = await (adaptiveVideoAgent as any).callAction('learnUserBehavior', {
-            action,
-            feature,
-            duration,
-            context,
-          });
-          
-          return new Response(JSON.stringify(result));
-        } catch (error) {
-          console.error("Learn behavior error:", error);
-          return new Response(
-            JSON.stringify({ error: "Failed to learn behavior" }),
-            { status: 500 }
-          );
-        }
-      },
-    },
-
-    "/api/agent/predict-feature": {
-      async POST(req) {
-        try {
-          const body = await req.json();
-          const { currentContext, timeSpentInCurrentFeature } = body;
-          
-          const result = await (adaptiveVideoAgent as any).callAction('predictNextFeature', {
-            currentContext,
-            timeSpentInCurrentFeature,
-          });
-          
-          return new Response(JSON.stringify(result));
-        } catch (error) {
-          console.error("Predict feature error:", error);
-          return new Response(
-            JSON.stringify({ 
-              predictedFeature: 'chat', 
-              confidence: 0, 
-              shouldSuggest: false 
-            }),
-            { status: 200 }
-          );
-        }
-      },
-    },
-
-    "/api/agent/analyze-intent": {
-      async POST(req) {
-        try {
-          const body = await req.json();
-          const { userMessage, currentMode } = body;
-          
-          const result = await (adaptiveVideoAgent as any).callAction('analyzeIntentAndSuggestTransition', {
-            userMessage,
-            currentMode,
-          });
-          
-          return new Response(JSON.stringify(result));
-        } catch (error) {
-          console.error("Analyze intent error:", error);
-          return new Response(
-            JSON.stringify({ 
-              intentDetected: false,
-              transitionTriggered: false 
-            }),
-            { status: 200 }
-          );
         }
       },
     },

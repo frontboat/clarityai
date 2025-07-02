@@ -20,45 +20,81 @@ export function setAgentConfig(config: typeof agentConfig) {
   agentConfig = config;
 }
 
-// Define schemas as raw shapes to avoid type instantiation issues
-const chatContextShape = z.object({
-  sessionId: z.string().describe("Unique session identifier for the chat"),
-});
-
-// Define memory interface for type safety
-interface ChatMemory {
-  sessionId: string;
-  messages: Array<{
-    role: "user" | "assistant";
-    content: string;
-    timestamp: number;
-  }>;
-  lastResponse?: string;
-}
-
 // Store for API responses
 const responseStore = new Map<string, string>();
 
-// Create chat context with proper memory typing
-const chatContext = context<ChatMemory>({
-  type: "chat",
-  schema: chatContextShape,
+// Create a single, unified context for the adaptive UI agent
+const clarityAgentContext = context({
+  type: "clarity-agent",
+  schema: z.object({ sessionId: z.string() }),
   
-  instructions: "You are a helpful AI assistant called ClarityAI. Provide clear, concise, and accurate responses to user queries. Keep your responses friendly and informative.",
-  
+  instructions: "You are a helpful AI assistant called ClarityAI. Your goal is to create a seamless video editing experience for the user by adapting to their workflow and predicting their needs. You can chat, manage a timeline, and organize a storyboard. Analyze user messages to understand their intent and proactively transition the UI to the most appropriate tool.",
+
   create: ({ args }) => ({
+    // from chatContext
     sessionId: args.sessionId,
     messages: [],
     lastResponse: undefined,
+    // from adaptiveUiContext
+    preferences: {
+      primaryWorkflow: "balanced",
+      timelineUsagePercent: 33,
+      storyboardUsagePercent: 33,
+      chatUsagePercent: 34,
+      lastActiveFeature: "chat",
+      sessionCount: 0,
+      averageSessionLength: 0,
+    },
+    behaviorPatterns: {
+      timeOfDayPreferences: {},
+      featureTransitionPatterns: [],
+      taskCompletionRates: {},
+      preferredEditingFlow: [],
+    },
+    projectData: {
+      timeline: { clips: [], duration: 0, markers: [] },
+      storyboard: { scenes: [], connections: [], notes: [] },
+      metadata: { title: "", description: "", tags: [] },
+    },
+    editingState: {
+      currentTool: "chat", // Start in chat
+      selectedClips: [],
+      playheadPosition: 0,
+      zoomLevel: 1,
+      activeLayer: 0,
+    },
+    uiState: {
+      currentView: "chat",
+      transitionState: "stable",
+      predictedNextFeature: null,
+      confidence: 0,
+      sidebarOpen: true,
+      timelineHeight: 200,
+      storyboardVisible: false,
+      chatExpanded: true,
+    },
+    recentActions: [],
   }),
-  
-  // Render function to show context state to the LLM
-  render: ({ memory }) => {
-    const recentMessages = memory.messages.slice(-10);
+
+  render: (state) => {
+    const recentMessages = (state.memory.messages as any[]).slice(-10);
     return `
-Chat Session: ${memory.sessionId}
-Recent messages (${memory.messages.length} total):
-${recentMessages.map(m => `${m.role}: ${m.content}`).join('\n')}
+Chat Session: ${state.memory.sessionId}
+Recent messages (${(state.memory.messages as any[]).length} total):
+${recentMessages.map((m: any) => `${m.role}: ${m.content}`).join('\n')}
+
+---
+
+User Profile: ${state.args.sessionId}
+Primary Workflow: ${(state.memory.preferences as any).primaryWorkflow}
+Current View: ${(state.memory.uiState as any).currentView}
+Transition: ${(state.memory.uiState as any).transitionState}
+Predicted Next: ${(state.memory.uiState as any).predictedNextFeature} (${(state.memory.uiState as any).confidence}% confidence)
+
+Project: ${(state.memory.projectData as any).metadata.title || 'Untitled'}
+Timeline: ${(state.memory.projectData as any).timeline.clips.length} clips
+Storyboard: ${(state.memory.projectData as any).storyboard.scenes.length} scenes
+Current Tool: ${(state.memory.editingState as any).currentTool}
     `.trim();
   },
 
@@ -79,46 +115,325 @@ ${recentMessages.map(m => `${m.role}: ${m.content}`).join('\n')}
   },
 });
 
-// Create an action to handle responses
-const respondAction = action<any, any, ChatMemory>({
-  name: "respond",
-  description: "Respond to the user's message",
-  schema: z.object({
-    response: z.string().describe("The response to send to the user"),
-    sessionId: z.string().describe("Session ID for the response"),
-  }),
-  handler: async ({ response, sessionId }, ctx) => {
-    // Store the response for retrieval
-    responseStore.set(sessionId, response);
-    
-    // Update context memory
-    if (ctx.memory) {
-      ctx.memory.lastResponse = response;
-      ctx.memory.messages.push({
-        role: "assistant",
-        content: response,
-        timestamp: Date.now(),
-      });
-    }
-    
-    return { success: true, response };
-  },
+// UI State management for cross-component communication
+let currentUIState = {
+  mode: 'chat' as 'chat' | 'timeline' | 'storyboard',
+  prediction: null as string | null,
+  confidence: 0,
+  lastTransition: Date.now(),
+};
+
+// Store for UI commands that need to be sent to frontend
+const uiCommandStore = new Map<string, any>();
+
+// Create the unified agent
+const clarityAgent = createDreams({
+  model: openrouter(agentConfig.model),
+  contexts: [clarityAgentContext],
+  
+  // Custom actions for interface control and learning
+  actions: [
+    // Respond to user
+    action<any, any, any>({
+      name: "respond",
+      description: "Respond to the user's message",
+      schema: z.object({
+        response: z.string().describe("The response to send to the user"),
+        sessionId: z.string().describe("Session ID for the response"),
+      }),
+      handler: async ({ response, sessionId }, ctx) => {
+        responseStore.set(sessionId, response);
+        if (ctx.memory) {
+          ctx.memory.lastResponse = response;
+          ctx.memory.messages.push({
+            role: "assistant",
+            content: response,
+            timestamp: Date.now(),
+          });
+        }
+        return { success: true, response };
+      },
+    }),
+
+    // Interface transition actions
+    action({
+      name: "transitionToFeature",
+      description: "Seamlessly transition the UI to a different editing feature based on user intent or prediction",
+      schema: z.object({
+        targetFeature: z.enum(["chat", "timeline", "storyboard"]),
+        reason: z.string().describe("Why this transition is being suggested"),
+        confidence: z.number().min(0).max(1).optional().describe("Confidence level of this transition recommendation"),
+      }),
+      handler: async ({ targetFeature, reason, confidence = 0.8 }, ctx: any) => {
+        console.log(`🔄 Agent suggesting transition to ${targetFeature}: ${reason} (${Math.round(confidence * 100)}% confidence)`);
+        
+        currentUIState.mode = targetFeature;
+        currentUIState.prediction = targetFeature;
+        currentUIState.confidence = confidence;
+        currentUIState.lastTransition = Date.now();
+        
+        const commandId = `transition-${Date.now()}`;
+        uiCommandStore.set(commandId, {
+          type: 'transition',
+          targetFeature,
+          reason,
+          confidence,
+          timestamp: Date.now(),
+        });
+        
+        if (ctx.memory) {
+          ctx.memory.uiState.currentView = targetFeature;
+          ctx.memory.uiState.transitionState = 'transitioning';
+          ctx.memory.uiState.predictedNextFeature = null;
+          ctx.memory.uiState.confidence = confidence;
+          ctx.memory.recentActions.push({
+            type: 'transition',
+            from: ctx.memory.uiState.currentView,
+            to: targetFeature,
+            reason,
+            timestamp: Date.now(),
+          });
+        }
+        
+        return {
+          success: true,
+          uiCommand: { type: 'transition', targetFeature, reason, confidence, commandId },
+          message: `Switching to ${targetFeature} mode. ${reason}`,
+        };
+      },
+    }),
+
+    // User behavior learning action
+    action({
+      name: "learnUserBehavior",
+      description: "Learn and update user behavior patterns to improve future predictions",
+      schema: z.object({
+        action: z.string().describe("The specific action the user took"),
+        feature: z.string().describe("Which feature/mode the user was using"),
+        duration: z.number().describe("How long they spent in this mode (milliseconds)"),
+        context: z.object({
+          timeOfDay: z.number().optional(),
+          sessionLength: z.number().optional(),
+          previousMode: z.string().optional(),
+        }).describe("Additional context about the usage"),
+      }),
+      handler: async ({ action, feature, duration, context }, ctx: any) => {
+        console.log(`📚 Learning: User spent ${duration}ms in ${feature} doing ${action}`);
+        
+        if (!ctx.memory) return { success: false, error: "No memory context" };
+        
+        const userMemory = ctx.memory;
+        
+        const featureKey = `${feature}UsagePercent` as keyof typeof userMemory.preferences;
+        const currentUsage = userMemory.preferences[featureKey] || 33;
+        const sessionCount = userMemory.preferences.sessionCount + 1;
+        
+        const durationWeight = Math.min(duration / 60000, 1);
+        const newUsage = (currentUsage * 0.9) + (durationWeight * 10);
+        (userMemory.preferences as any)[featureKey] = Math.min(newUsage, 100);
+        
+        userMemory.behaviorPatterns.featureTransitionPatterns.push({
+          from: userMemory.editingState.currentTool,
+          to: feature,
+          timestamp: Date.now(),
+          duration,
+          confidence: durationWeight,
+          context,
+        });
+        
+        userMemory.editingState.currentTool = feature;
+        userMemory.preferences.sessionCount = sessionCount;
+        
+        return {
+          success: true,
+          learningData: {
+            updatedPatterns: userMemory.behaviorPatterns.featureTransitionPatterns.length,
+            newUsagePercent: Math.round(newUsage),
+            sessionCount,
+          },
+        };
+      },
+    }),
+
+    // Predictive interface action  
+    action({
+      name: "predictNextFeature",
+      description: "Analyze user patterns to predict what feature they'll want next",
+      schema: z.object({
+        currentContext: z.object({
+          currentMode: z.string().optional(),
+          timeInMode: z.number().optional(),
+          recentActions: z.array(z.string()).optional(),
+        }).describe("Current context and usage data"),
+        timeSpentInCurrentFeature: z.number().describe("Time spent in current mode (milliseconds)"),
+      }),
+      handler: async ({ currentContext, timeSpentInCurrentFeature }, ctx: any) => {
+        if (!ctx.memory) return { success: false, error: "No memory context" };
+        
+        const userMemory = ctx.memory;
+        const patterns = userMemory.behaviorPatterns.featureTransitionPatterns;
+        
+        console.log(`🔮 Predicting next feature based on ${patterns.length} historical patterns`);
+        
+        const recentPatterns = patterns.slice(-20);
+        const transitionMap = new Map<string, { count: number, avgDuration: number }>();
+        
+        recentPatterns.forEach((pattern: any) => {
+          const key = `${pattern.from}->${pattern.to}`;
+          if (!transitionMap.has(key)) {
+            transitionMap.set(key, { count: 0, avgDuration: 0 });
+          }
+          const entry = transitionMap.get(key)!;
+          entry.count++;
+          entry.avgDuration = (entry.avgDuration + pattern.duration) / 2;
+        });
+        
+        const currentMode = currentContext.currentMode || currentUIState.mode;
+        let bestPrediction = { feature: 'chat', confidence: 0, reasoning: 'default' };
+        
+        transitionMap.forEach((data, transition) => {
+          const [from, to] = transition.split('->');
+          if (from === currentMode) {
+            const confidence = (data.count / recentPatterns.length) * (timeSpentInCurrentFeature > data.avgDuration ? 1.2 : 0.8);
+            
+            if (confidence > bestPrediction.confidence) {
+              bestPrediction = {
+                feature: to,
+                confidence: Math.min(confidence, 1),
+                reasoning: `${data.count} similar transitions, avg duration: ${Math.round(data.avgDuration/1000)}s`,
+              };
+            }
+          }
+        });
+        
+        currentUIState.prediction = bestPrediction.feature;
+        currentUIState.confidence = bestPrediction.confidence;
+        
+        return {
+          predictedFeature: bestPrediction.feature,
+          confidence: bestPrediction.confidence,
+          reasoning: bestPrediction.reasoning,
+          shouldSuggest: bestPrediction.confidence > 0.6,
+        };
+      },
+    }),
+
+    // Intent detection and smart transitions
+    action({
+      name: "analyzeIntentAndSuggestTransition",
+      description: "Analyze user message for editing intent and suggest appropriate tool transitions",
+      schema: z.object({
+        userMessage: z.string().describe("The user's message to analyze"),
+        currentMode: z.string().describe("Current editing mode"),
+      }),
+      handler: async ({ userMessage, currentMode }, ctx: any, agent: any) => {
+        const message = userMessage.toLowerCase();
+        
+        const timelineKeywords = ['timeline', 'edit', 'cut', 'trim', 'split', 'clips', 'precision', 'frame', 'second', 'duration', 'sync', 'audio', 'video', 'sequence', 'edit video', 'cut clip', 'trim video', 'precise editing'];
+        const storyboardKeywords = ['storyboard', 'scene', 'story', 'flow', 'sequence', 'plan', 'narrative', 'shots', 'angle', 'composition', 'story flow', 'plan story', 'organize scenes', 'story planning'];
+        
+        let suggestion = null;
+        let confidence = 0;
+        let reason = '';
+        
+        const timelineMatches = timelineKeywords.filter(keyword => message.includes(keyword));
+        if (timelineMatches.length > 0) {
+          confidence = Math.min(timelineMatches.length * 0.3, 0.9);
+          if (currentMode !== 'timeline') {
+            suggestion = 'timeline';
+            reason = `Detected timeline editing intent from keywords: ${timelineMatches.slice(0, 3).join(', ')}`;
+          }
+        }
+        
+        const storyboardMatches = storyboardKeywords.filter(keyword => message.includes(keyword));
+        if (storyboardMatches.length > 0) {
+          const storyboardConfidence = Math.min(storyboardMatches.length * 0.3, 0.9);
+          if (storyboardConfidence > confidence && currentMode !== 'storyboard') {
+            suggestion = 'storyboard';
+            confidence = storyboardConfidence;
+            reason = `Detected storyboard planning intent from keywords: ${storyboardMatches.slice(0, 3).join(', ')}`;
+          }
+        }
+        
+        if (message.includes('switch to timeline') || message.includes('timeline editor')) {
+          suggestion = 'timeline';
+          confidence = 0.95;
+          reason = 'Direct request for timeline editor';
+        } else if (message.includes('switch to storyboard') || message.includes('storyboard editor')) {
+          suggestion = 'storyboard'; 
+          confidence = 0.95;
+          reason = 'Direct request for storyboard editor';
+        }
+        
+        console.log(`🔍 Intent analysis: ${suggestion ? `Suggest ${suggestion} (${Math.round(confidence * 100)}%)` : 'No transition needed'}`);
+        
+        if (suggestion && confidence > 0.4) {
+          const transitionResult = await (agent as any)?.callAction('transitionToFeature', {
+            targetFeature: suggestion,
+            reason,
+            confidence,
+          });
+          
+          return {
+            intentDetected: true,
+            suggestedFeature: suggestion,
+            confidence,
+            reason,
+            transitionTriggered: true,
+            transitionResult,
+          };
+        }
+        
+        return {
+          intentDetected: false,
+          suggestedFeature: null,
+          confidence: 0,
+          reason: 'No clear editing intent detected',
+          transitionTriggered: false,
+        };
+      },
+    }),
+
+    // Timeline editing actions
+    action({
+      name: "editTimeline",
+      description: "Perform timeline editing operations",
+      schema: z.object({
+        operation: z.enum(["add-clip", "split-clip", "move-clip", "trim-clip"]),
+        clipId: z.string().optional(),
+        position: z.number().optional(),
+        data: z.object({}).passthrough(),
+      }),
+      handler: async ({ operation, clipId, position, data }, ctx) => {
+        console.log(`⏱️ Timeline operation: ${operation} ${clipId ? `on clip ${clipId}` : ''}`);
+        return { success: true, operation, clipId, position };
+      },
+    }),
+
+    // Storyboard editing actions
+    action({
+      name: "editStoryboard", 
+      description: "Perform storyboard editing operations",
+      schema: z.object({
+        operation: z.enum(["add-scene", "connect-scenes", "add-note", "reorder"]),
+        sceneId: z.string().optional(),
+        data: z.object({}).passthrough(),
+      }),
+      handler: async ({ operation, sceneId, data }, ctx) => {
+        console.log(`🎬 Storyboard operation: ${operation} ${sceneId ? `on scene ${sceneId}` : ''}`);
+        return { success: true, operation, sceneId };
+      },
+    }),
+  ],
 });
 
-// Create the agent
-const agent = createDreams({
-  model: openrouter(agentConfig.model),
-  contexts: [chatContext],
-  actions: [respondAction],
-});
 
 // Initialize the agents
 let agentStarted = false;
 export async function initializeAgent() {
   if (!agentStarted) {
-    // Start both agents
-    await agent.start();
-    await adaptiveVideoAgent.start();
+    // Start the agent
+    await clarityAgent.start();
     agentStarted = true;
     console.log(`ClarityAI agent initialized with Daydreams and OpenRouter (model: ${agentConfig.model})`);
   }
@@ -127,19 +442,8 @@ export async function initializeAgent() {
 // Handle chat messages using Daydreams with intent detection
 export async function handleChatMessage(sessionId: string, message: string): Promise<string> {
   try {
-    // First, analyze intent for potential mode transitions
-    try {
-      await adaptiveVideoAgent.callAction('analyzeIntentAndSuggestTransition', {
-        userMessage: message,
-        currentMode: currentUIState.mode,
-      });
-    } catch (intentError) {
-      console.log('Intent analysis skipped:', intentError.message);
-    }
-    
-    // Then handle the regular chat response
-    const result = await agent.send({
-      context: chatContext,
+    const result = await clarityAgent.send({
+      context: clarityAgentContext,
       args: { sessionId },
       input: {
         type: "user:message",
@@ -205,443 +509,6 @@ function extractResponse(result: any): string {
   return "";
 }
 
-// User preference learning context
-const userProfileContext = context({
-  type: "user-profile",
-  schema: z.object({ userId: z.string() }),
-  
-  create: () => ({
-    preferences: {
-      primaryWorkflow: "balanced", // timeline, storyboard, balanced
-      timelineUsagePercent: 33,
-      storyboardUsagePercent: 33,
-      chatUsagePercent: 34,
-      lastActiveFeature: "chat",
-      sessionCount: 0,
-      averageSessionLength: 0,
-    },
-    behaviorPatterns: {
-      timeOfDayPreferences: {},
-      featureTransitionPatterns: [],
-      taskCompletionRates: {},
-      preferredEditingFlow: [],
-    },
-    currentSession: {
-      startTime: Date.now(),
-      currentFeature: "chat",
-      featureUsageTimes: {},
-      transitionHistory: [],
-    },
-  }),
-
-  render: (state) => `
-User Profile: ${state.args.userId}
-Primary Workflow: ${state.memory.preferences.primaryWorkflow}
-Current Feature: ${state.memory.currentSession.currentFeature}
-Session Progress: ${state.memory.currentSession.transitionHistory.length} transitions
-
-Usage Patterns:
-- Timeline: ${state.memory.preferences.timelineUsagePercent}%
-- Storyboard: ${state.memory.preferences.storyboardUsagePercent}%
-- Chat: ${state.memory.preferences.chatUsagePercent}%
-
-Recent Behavior:
-${state.memory.behaviorPatterns.featureTransitionPatterns.slice(-3).map(p => 
-  `${p.from} → ${p.to} (${p.confidence}% match)`
-).join('\n')}
-  `,
-});
-
-// Video editing session context
-const editingSessionContext = context({
-  type: "editing-session",
-  schema: z.object({ 
-    sessionId: z.string(),
-    userId: z.string() 
-  }),
-  
-  create: () => ({
-    projectData: {
-      timeline: { clips: [], duration: 0, markers: [] },
-      storyboard: { scenes: [], connections: [], notes: [] },
-      metadata: { title: "", description: "", tags: [] },
-    },
-    editingState: {
-      currentTool: "none",
-      selectedClips: [],
-      playheadPosition: 0,
-      zoomLevel: 1,
-      activeLayer: 0,
-    },
-    undoHistory: [],
-    redoHistory: [],
-  }),
-
-  render: (state) => `
-Editing Session: ${state.args.sessionId}
-Project: ${state.memory.projectData.metadata.title || 'Untitled'}
-
-Timeline: ${state.memory.projectData.timeline.clips.length} clips
-Storyboard: ${state.memory.projectData.storyboard.scenes.length} scenes
-Current Tool: ${state.memory.editingState.currentTool}
-Playhead: ${state.memory.editingState.playheadPosition}s
-  `,
-});
-
-// Interface state context
-const interfaceContext = context({
-  type: "interface",
-  schema: z.object({ userId: z.string() }),
-  
-  create: () => ({
-    currentView: "chat",
-    transitionState: "stable", // stable, transitioning, predicting
-    predictedNextFeature: null,
-    confidence: 0,
-    uiState: {
-      sidebarOpen: true,
-      timelineHeight: 200,
-      storyboardVisible: false,
-      chatExpanded: true,
-    },
-    recentActions: [],
-  }),
-
-  render: (state) => `
-Interface State:
-Current View: ${state.memory.currentView}
-Transition: ${state.memory.transitionState}
-Predicted Next: ${state.memory.predictedNextFeature} (${state.memory.confidence}% confidence)
-
-UI Configuration:
-- Sidebar: ${state.memory.uiState.sidebarOpen ? 'open' : 'closed'}
-- Timeline Height: ${state.memory.uiState.timelineHeight}px
-- Storyboard: ${state.memory.uiState.storyboardVisible ? 'visible' : 'hidden'}
-- Chat: ${state.memory.uiState.chatExpanded ? 'expanded' : 'collapsed'}
-  `,
-});
-
-// UI State management for cross-component communication
-let currentUIState = {
-  mode: 'chat' as 'chat' | 'timeline' | 'storyboard',
-  prediction: null as string | null,
-  confidence: 0,
-  lastTransition: Date.now(),
-};
-
-// Store for UI commands that need to be sent to frontend
-const uiCommandStore = new Map<string, any>();
-
-export const adaptiveVideoAgent = createDreams({
-  model: openrouter(agentConfig.model),
-  contexts: [userProfileContext, editingSessionContext, interfaceContext],
-  
-  // Custom actions for interface control and learning
-  actions: [
-    // Interface transition actions
-    action({
-      name: "transitionToFeature",
-      description: "Seamlessly transition the UI to a different editing feature based on user intent or prediction",
-      schema: z.object({
-        targetFeature: z.enum(["chat", "timeline", "storyboard"]),
-        reason: z.string().describe("Why this transition is being suggested"),
-        confidence: z.number().min(0).max(1).optional().describe("Confidence level of this transition recommendation"),
-      }),
-      handler: async ({ targetFeature, reason, confidence = 0.8 }, ctx) => {
-        console.log(`🔄 Agent suggesting transition to ${targetFeature}: ${reason} (${Math.round(confidence * 100)}% confidence)`);
-        
-        // Update internal UI state
-        currentUIState.mode = targetFeature;
-        currentUIState.prediction = targetFeature;
-        currentUIState.confidence = confidence;
-        currentUIState.lastTransition = Date.now();
-        
-        // Store UI command for frontend to pick up
-        const commandId = `transition-${Date.now()}`;
-        uiCommandStore.set(commandId, {
-          type: 'transition',
-          targetFeature,
-          reason,
-          confidence,
-          timestamp: Date.now(),
-        });
-        
-        // Update interface context memory
-        if (ctx.memory) {
-          ctx.memory.currentView = targetFeature;
-          ctx.memory.transitionState = 'transitioning';
-          ctx.memory.predictedNextFeature = null;
-          ctx.memory.confidence = confidence;
-          ctx.memory.recentActions.push({
-            type: 'transition',
-            from: ctx.memory.currentView,
-            to: targetFeature,
-            reason,
-            timestamp: Date.now(),
-          });
-        }
-        
-        return {
-          success: true,
-          uiCommand: {
-            type: 'transition',
-            targetFeature,
-            reason,
-            confidence,
-            commandId,
-          },
-          message: `Switching to ${targetFeature} mode. ${reason}`,
-        };
-      },
-    }),
-
-    // User behavior learning action
-    action({
-      name: "learnUserBehavior",
-      description: "Learn and update user behavior patterns to improve future predictions",
-      schema: z.object({
-        action: z.string().describe("The specific action the user took"),
-        feature: z.string().describe("Which feature/mode the user was using"),
-        duration: z.number().describe("How long they spent in this mode (milliseconds)"),
-        context: z.object({
-          timeOfDay: z.number().optional(),
-          sessionLength: z.number().optional(),
-          previousMode: z.string().optional(),
-        }).describe("Additional context about the usage"),
-      }),
-      handler: async ({ action, feature, duration, context }, ctx) => {
-        console.log(`📚 Learning: User spent ${duration}ms in ${feature} doing ${action}`);
-        
-        if (!ctx.memory) return { success: false, error: "No memory context" };
-        
-        const userMemory = ctx.memory;
-        
-        // Update usage patterns with weighted average
-        const featureKey = `${feature}UsagePercent`;
-        const currentUsage = userMemory.preferences[featureKey] || 33;
-        const sessionCount = userMemory.preferences.sessionCount + 1;
-        
-        // Convert duration to usage weight (longer time = higher preference)
-        const durationWeight = Math.min(duration / 60000, 1); // Max 1 minute = 100% weight
-        const newUsage = (currentUsage * 0.9) + (durationWeight * 10);
-        userMemory.preferences[featureKey] = Math.min(newUsage, 100);
-        
-        // Track transition patterns
-        userMemory.behaviorPatterns.featureTransitionPatterns.push({
-          from: userMemory.currentSession.currentFeature,
-          to: feature,
-          timestamp: Date.now(),
-          duration,
-          confidence: durationWeight,
-          context,
-        });
-        
-        // Update current session
-        userMemory.currentSession.currentFeature = feature;
-        userMemory.preferences.sessionCount = sessionCount;
-        
-        return {
-          success: true,
-          learningData: {
-            updatedPatterns: userMemory.behaviorPatterns.featureTransitionPatterns.length,
-            newUsagePercent: Math.round(newUsage),
-            sessionCount,
-          },
-        };
-      },
-    }),
-
-    // Predictive interface action  
-    action({
-      name: "predictNextFeature",
-      description: "Analyze user patterns to predict what feature they'll want next",
-      schema: z.object({
-        currentContext: z.object({
-          currentMode: z.string().optional(),
-          timeInMode: z.number().optional(),
-          recentActions: z.array(z.string()).optional(),
-        }).describe("Current context and usage data"),
-        timeSpentInCurrentFeature: z.number().describe("Time spent in current mode (milliseconds)"),
-      }),
-      handler: async ({ currentContext, timeSpentInCurrentFeature }, ctx) => {
-        if (!ctx.memory) return { success: false, error: "No memory context" };
-        
-        const userMemory = ctx.memory;
-        const patterns = userMemory.behaviorPatterns.featureTransitionPatterns;
-        
-        console.log(`🔮 Predicting next feature based on ${patterns.length} historical patterns`);
-        
-        // Analyze recent patterns (last 20 transitions)
-        const recentPatterns = patterns.slice(-20);
-        const transitionMap = new Map<string, { count: number, avgDuration: number }>();
-        
-        recentPatterns.forEach(pattern => {
-          const key = `${pattern.from}->${pattern.to}`;
-          if (!transitionMap.has(key)) {
-            transitionMap.set(key, { count: 0, avgDuration: 0 });
-          }
-          const entry = transitionMap.get(key)!;
-          entry.count++;
-          entry.avgDuration = (entry.avgDuration + pattern.duration) / 2;
-        });
-        
-        // Find most likely next feature from current mode
-        const currentMode = currentContext.currentMode || currentUIState.mode;
-        let bestPrediction = { feature: 'chat', confidence: 0, reasoning: 'default' };
-        
-        transitionMap.forEach((data, transition) => {
-          const [from, to] = transition.split('->');
-          if (from === currentMode) {
-            const confidence = (data.count / recentPatterns.length) * 
-                             (timeSpentInCurrentFeature > data.avgDuration ? 1.2 : 0.8);
-            
-            if (confidence > bestPrediction.confidence) {
-              bestPrediction = {
-                feature: to,
-                confidence: Math.min(confidence, 1),
-                reasoning: `${data.count} similar transitions, avg duration: ${Math.round(data.avgDuration/1000)}s`,
-              };
-            }
-          }
-        });
-        
-        // Update UI state
-        currentUIState.prediction = bestPrediction.feature;
-        currentUIState.confidence = bestPrediction.confidence;
-        
-        return {
-          predictedFeature: bestPrediction.feature,
-          confidence: bestPrediction.confidence,
-          reasoning: bestPrediction.reasoning,
-          shouldSuggest: bestPrediction.confidence > 0.6,
-        };
-      },
-    }),
-
-    // Intent detection and smart transitions
-    action({
-      name: "analyzeIntentAndSuggestTransition",
-      description: "Analyze user message for editing intent and suggest appropriate tool transitions",
-      schema: z.object({
-        userMessage: z.string().describe("The user's message to analyze"),
-        currentMode: z.string().describe("Current editing mode"),
-      }),
-      handler: async ({ userMessage, currentMode }, ctx) => {
-        const message = userMessage.toLowerCase();
-        
-        // Timeline editing keywords
-        const timelineKeywords = [
-          'timeline', 'edit', 'cut', 'trim', 'split', 'clips', 'precision', 
-          'frame', 'second', 'duration', 'sync', 'audio', 'video', 'sequence',
-          'edit video', 'cut clip', 'trim video', 'precise editing'
-        ];
-        
-        // Storyboard keywords  
-        const storyboardKeywords = [
-          'storyboard', 'scene', 'story', 'flow', 'sequence', 'plan', 
-          'narrative', 'shots', 'angle', 'composition', 'story flow',
-          'plan story', 'organize scenes', 'story planning'
-        ];
-        
-        let suggestion = null;
-        let confidence = 0;
-        let reason = '';
-        
-        // Check for timeline intent
-        const timelineMatches = timelineKeywords.filter(keyword => message.includes(keyword));
-        if (timelineMatches.length > 0) {
-          confidence = Math.min(timelineMatches.length * 0.3, 0.9);
-          if (currentMode !== 'timeline') {
-            suggestion = 'timeline';
-            reason = `Detected timeline editing intent from keywords: ${timelineMatches.slice(0, 3).join(', ')}`;
-          }
-        }
-        
-        // Check for storyboard intent
-        const storyboardMatches = storyboardKeywords.filter(keyword => message.includes(keyword));
-        if (storyboardMatches.length > 0) {
-          const storyboardConfidence = Math.min(storyboardMatches.length * 0.3, 0.9);
-          if (storyboardConfidence > confidence && currentMode !== 'storyboard') {
-            suggestion = 'storyboard';
-            confidence = storyboardConfidence;
-            reason = `Detected storyboard planning intent from keywords: ${storyboardMatches.slice(0, 3).join(', ')}`;
-          }
-        }
-        
-        // Check for specific phrases
-        if (message.includes('switch to timeline') || message.includes('timeline editor')) {
-          suggestion = 'timeline';
-          confidence = 0.95;
-          reason = 'Direct request for timeline editor';
-        } else if (message.includes('switch to storyboard') || message.includes('storyboard editor')) {
-          suggestion = 'storyboard'; 
-          confidence = 0.95;
-          reason = 'Direct request for storyboard editor';
-        }
-        
-        console.log(`🔍 Intent analysis: ${suggestion ? `Suggest ${suggestion} (${Math.round(confidence * 100)}%)` : 'No transition needed'}`);
-        
-        if (suggestion && confidence > 0.4) {
-          // Trigger the transition
-          const transitionResult = await ctx.agent?.callAction('transitionToFeature', {
-            targetFeature: suggestion,
-            reason,
-            confidence,
-          });
-          
-          return {
-            intentDetected: true,
-            suggestedFeature: suggestion,
-            confidence,
-            reason,
-            transitionTriggered: true,
-            transitionResult,
-          };
-        }
-        
-        return {
-          intentDetected: false,
-          suggestedFeature: null,
-          confidence: 0,
-          reason: 'No clear editing intent detected',
-          transitionTriggered: false,
-        };
-      },
-    }),
-
-    // Timeline editing actions
-    action({
-      name: "editTimeline",
-      description: "Perform timeline editing operations",
-      schema: z.object({
-        operation: z.enum(["add-clip", "split-clip", "move-clip", "trim-clip"]),
-        clipId: z.string().optional(),
-        position: z.number().optional(),
-        data: z.object({}).passthrough(),
-      }),
-      handler: async ({ operation, clipId, position, data }, ctx) => {
-        console.log(`⏱️ Timeline operation: ${operation} ${clipId ? `on clip ${clipId}` : ''}`);
-        return { success: true, operation, clipId, position };
-      },
-    }),
-
-    // Storyboard editing actions
-    action({
-      name: "editStoryboard", 
-      description: "Perform storyboard editing operations",
-      schema: z.object({
-        operation: z.enum(["add-scene", "connect-scenes", "add-note", "reorder"]),
-        sceneId: z.string().optional(),
-        data: z.object({}).passthrough(),
-      }),
-      handler: async ({ operation, sceneId, data }, ctx) => {
-        console.log(`🎬 Storyboard operation: ${operation} ${sceneId ? `on scene ${sceneId}` : ''}`);
-        return { success: true, operation, sceneId };
-      },
-    }),
-  ],
-});
-
 // Export function to get and clear UI commands for frontend
 export function getUICommands(): any[] {
   const commands = Array.from(uiCommandStore.values());
@@ -653,37 +520,4 @@ export function getUICommands(): any[] {
 export function getCurrentUIState() {
   return { ...currentUIState };
 }
-
-// Add callAction method to adaptiveVideoAgent for frontend communication
-(adaptiveVideoAgent as any).callAction = async (actionName: string, args: any) => {
-  try {
-    console.log(`🎯 Calling action: ${actionName}`, args);
-    
-    // Determine which context to use based on the action
-    let targetContext = interfaceContext;
-    let contextArgs = { userId: "default-user" };
-    
-    if (actionName === "learnUserBehavior") {
-      targetContext = userProfileContext;
-      contextArgs = { userId: "default-user" };
-    } else if (actionName === "editTimeline" || actionName === "editStoryboard") {
-      targetContext = editingSessionContext;
-      contextArgs = { sessionId: "default-session", userId: "default-user" };
-    }
-    
-    const result = await adaptiveVideoAgent.send({
-      context: targetContext,
-      args: contextArgs,
-      input: {
-        type: "action-call",
-        data: { actionName, args },
-      },
-    });
-    
-    return result;
-  } catch (error) {
-    console.error(`Error calling action ${actionName}:`, error);
-    return { error: error instanceof Error ? error.message : "Unknown error" };
-  }
-};
 
