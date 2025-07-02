@@ -112,11 +112,28 @@ const changeBackgroundColorAction = action({
   },
 });
 
+const updateDOMAction = action({
+  name: "updateDOM",
+  description:
+    "Update the inner HTML of the main content area of the page. This can be used to render any HTML content on the page, providing a blank canvas.",
+  schema: z.object({
+    html: z.string().describe("The HTML content to render on the page. It can be a full HTML structure."),
+  }),
+  handler: async ({ html }, ctx) => {
+    const result = { type: "updateDOM", payload: { html } };
+    if (ctx.memory?.sessionId) {
+      responseStore.set(ctx.memory.sessionId, result);
+      return { success: true, message: `Updated the DOM with new HTML content.` };
+    }
+    return { success: false, message: "Session ID not found." };
+  },
+});
+
 // Create the agent
 const agent = createDreams({
   model: openrouter("openai/gpt-4o"),
   contexts: [chatContext],
-  actions: [respondAction, changeBackgroundColorAction],
+  actions: [respondAction, changeBackgroundColorAction, updateDOMAction],
 });
 
 // Initialize the agent

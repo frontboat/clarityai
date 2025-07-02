@@ -26,6 +26,8 @@ export function App() {
         <p className="text-muted-foreground mb-8">
           Press <kbd>Cmd+J</kbd> to talk to the agent.
         </p>
+
+        <div id="agent-canvas"></div>
       </div>
     </>
   );

@@ -91,6 +91,14 @@ export const CommandPalette: React.FC = () => {
             const actionMessage: Message = { role: 'assistant', content: `Ok, I've changed the background to ${payload.color}` };
             setMessages(prev => [...prev, actionMessage]);
             break;
+          case 'updateDOM':
+            const canvas = document.getElementById('agent-canvas');
+            if (canvas) {
+              canvas.innerHTML = payload.html;
+            }
+            const updateMessage: Message = { role: 'assistant', content: "Ok, I've updated the page content." };
+            setMessages(prev => [...prev, updateMessage]);
+            break;
           default:
             const defaultMessage: Message = { role: 'assistant', content: "I'm not sure how to handle that action." };
             setMessages(prev => [...prev, defaultMessage]);
