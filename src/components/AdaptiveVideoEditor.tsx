@@ -1,21 +1,35 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { ChatInterface } from '../ChatInterface';
+import React, { useState, useEffect, useRef } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { TimelineEditor } from './TimelineEditor';
 import { StoryboardEditor } from './StoryboardEditor';
-import { useAgent } from '../hooks/useAgent';
-import { motion, AnimatePresence } from 'framer-motion';
 
 type EditingMode = 'chat' | 'timeline' | 'storyboard';
 
 interface UIState {
-  currentMode: EditingMode;
-  predictedNext: EditingMode | null;
-  confidence: number;
-  transitionState: 'stable' | 'transitioning' | 'predicting';
-  sidebarOpen: boolean;
-  timelineHeight: number;
-  storyboardVisible: boolean;
-  chatExpanded: boolean;
+  mode: EditingMode;
+  prediction?: {
+    nextMode: string;
+    confidence: number;
+    reasoning: string;
+  };
+  isTransitioning: boolean;
+  showPrediction: boolean;
+  learningData: {
+    timeInMode: number;
+    totalTransitions: number;
+    behaviorPatterns: any[];
+  };
+}
+
+interface AdaptiveVideoEditorProps {
+  onSendMessage: (message: string) => void;
+  messages: Array<{
+    id: string;
+    role: 'user' | 'assistant';
+    content: string;
+    timestamp: number;
+  }>;
+  isLoading: boolean;
 }
 
 const TRANSITION_ANIMATIONS = {
@@ -26,334 +40,279 @@ const TRANSITION_ANIMATIONS = {
   enter: { scale: 0.95, opacity: 0, y: -20 },
 };
 
-export const AdaptiveVideoEditor: React.FC = () => {
-  const { agent, sendMessage, callAction, isConnected } = useAgent();
+export function AdaptiveVideoEditor({ onSendMessage, messages, isLoading }: AdaptiveVideoEditorProps) {
   const [uiState, setUIState] = useState<UIState>({
-    currentMode: 'chat',
-    predictedNext: null,
-    confidence: 0,
-    transitionState: 'stable',
-    sidebarOpen: true,
-    timelineHeight: 200,
-    storyboardVisible: false,
-    chatExpanded: true,
+    mode: 'chat',
+    isTransitioning: false,
+    showPrediction: false,
+    learningData: {
+      timeInMode: 0,
+      totalTransitions: 0,
+      behaviorPatterns: [],
+    },
   });
 
-  const [userActivity, setUserActivity] = useState({
-    lastInteraction: Date.now(),
-    currentFeatureStartTime: Date.now(),
-    interactionCount: 0,
-  });
+  const [modeStartTime, setModeStartTime] = useState(Date.now());
+  const pollTimeoutRef = useRef<NodeJS.Timeout>();
 
-  const modeStartTimeRef = useRef(Date.now());
-  const activityTimeoutRef = useRef<NodeJS.Timeout>();
+  // Poll for UI commands from the server
+  useEffect(() => {
+    const pollUICommands = async () => {
+      try {
+        const response = await fetch('/api/ui-commands');
+        if (response.ok) {
+          const commands = await response.json();
+          
+          commands.forEach((command: any) => {
+            if (command.type === 'transition') {
+              console.log(`🔄 Received transition command: ${command.targetFeature}`, command);
+              handleModeTransition(command.targetFeature, command.reason, command.confidence);
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Error polling UI commands:', error);
+      }
+      
+      // Schedule next poll
+      pollTimeoutRef.current = setTimeout(pollUICommands, 1000);
+    };
 
-  // Track user behavior and predict next feature
-  const trackActivity = useCallback(async (action: string, feature: string) => {
-    const duration = Date.now() - modeStartTimeRef.current;
+    pollUICommands();
     
-    setUserActivity(prev => ({
+    return () => {
+      if (pollTimeoutRef.current) {
+        clearTimeout(pollTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  // Handle mode transitions
+  const handleModeTransition = async (newMode: 'chat' | 'timeline' | 'storyboard', reason?: string, confidence?: number) => {
+    if (newMode === uiState.mode) return;
+
+    const timeInCurrentMode = Date.now() - modeStartTime;
+    
+    // Learn from current behavior
+    try {
+      await fetch('/api/agent/learn-behavior', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'mode-usage',
+          feature: uiState.mode,
+          duration: timeInCurrentMode,
+          context: {
+            timeOfDay: new Date().getHours(),
+            previousMode: uiState.mode,
+          }
+        }),
+      });
+    } catch (error) {
+      console.error('Error learning behavior:', error);
+    }
+
+    setUIState(prev => ({
       ...prev,
-      lastInteraction: Date.now(),
-      interactionCount: prev.interactionCount + 1,
+      mode: newMode,
+      isTransitioning: true,
+      prediction: reason ? {
+        nextMode: newMode,
+        confidence: confidence || 0.8,
+        reasoning: reason,
+      } : undefined,
+      learningData: {
+        ...prev.learningData,
+        totalTransitions: prev.learningData.totalTransitions + 1,
+        timeInMode: timeInCurrentMode,
+      },
     }));
 
-    // Send behavior data to agent
-    if (callAction) {
-      await callAction('learnUserBehavior', {
-        action,
-        feature,
-        duration,
-        context: { 
-          timeOfDay: new Date().getHours(),
-          sessionLength: Date.now() - userActivity.currentFeatureStartTime,
-        },
-      });
+    setModeStartTime(Date.now());
 
-      // Get prediction for next feature
-      const prediction = await callAction('predictNextFeature', {
-        currentContext: { currentMode: uiState.currentMode },
-        timeSpentInCurrentFeature: duration,
-      });
-
-      if (prediction.confidence > 0.7) {
-        setUIState(prev => ({
-          ...prev,
-          predictedNext: prediction.predictedFeature,
-          confidence: prediction.confidence,
-          transitionState: 'predicting',
-        }));
-      }
-    }
-  }, [callAction, uiState.currentMode, userActivity.currentFeatureStartTime]);
-
-  // Seamless transition to predicted feature
-  const transitionToMode = useCallback(async (mode: EditingMode, reason: string = 'user action') => {
-    if (mode === uiState.currentMode) return;
-
-    setUIState(prev => ({ ...prev, transitionState: 'transitioning' }));
-
-    // Send transition command to agent
-    if (callAction) {
-      await callAction('transitionToFeature', {
-        targetFeature: mode,
-        reason,
-        confidence: uiState.confidence,
-      });
-    }
-
-    // Track the transition
-    await trackActivity('transition', mode);
-
-    // Update UI state
+    // Clear transition state after animation
     setTimeout(() => {
-      setUIState(prev => ({
-        ...prev,
-        currentMode: mode,
-        transitionState: 'stable',
-        predictedNext: null,
-        confidence: 0,
-      }));
-      modeStartTimeRef.current = Date.now();
-    }, 300);
-  }, [agent, uiState.currentMode, uiState.confidence, trackActivity]);
-
-  // Auto-transition based on predictions
-  useEffect(() => {
-    if (uiState.predictedNext && uiState.confidence > 0.8 && uiState.transitionState === 'predicting') {
-      const timeInCurrentMode = Date.now() - modeStartTimeRef.current;
-      
-      // Only auto-transition if user has been in current mode for a reasonable time
-      if (timeInCurrentMode > 10000) { // 10 seconds
-        transitionToMode(uiState.predictedNext, 'predicted user need');
-      }
-    }
-  }, [uiState.predictedNext, uiState.confidence, uiState.transitionState, transitionToMode]);
-
-  // Clear prediction timeout
-  useEffect(() => {
-    if (activityTimeoutRef.current) {
-      clearTimeout(activityTimeoutRef.current);
-    }
-
-    activityTimeoutRef.current = setTimeout(() => {
-      setUIState(prev => ({
-        ...prev,
-        predictedNext: null,
-        confidence: 0,
-        transitionState: 'stable',
-      }));
-    }, 30000); // Clear prediction after 30 seconds of inactivity
-
-    return () => {
-      if (activityTimeoutRef.current) {
-        clearTimeout(activityTimeoutRef.current);
-      }
-    };
-  }, [userActivity.lastInteraction]);
-
-  // Handle mode-specific interactions
-  const handleChatMessage = useCallback(async (message: string) => {
-    await trackActivity('chat_message', 'chat');
-    
-    // Analyze message for potential mode switches
-    const timelineKeywords = ['timeline', 'edit', 'cut', 'trim', 'split', 'clips'];
-    const storyboardKeywords = ['storyboard', 'scene', 'story', 'flow', 'sequence', 'plan'];
-    
-    const hasTimelineIntent = timelineKeywords.some(keyword => 
-      message.toLowerCase().includes(keyword)
-    );
-    const hasStoryboardIntent = storyboardKeywords.some(keyword => 
-      message.toLowerCase().includes(keyword)
-    );
-
-    if (hasTimelineIntent && uiState.currentMode !== 'timeline') {
-      await transitionToMode('timeline', 'detected timeline intent in chat');
-    } else if (hasStoryboardIntent && uiState.currentMode !== 'storyboard') {
-      await transitionToMode('storyboard', 'detected storyboard intent in chat');
-    }
-
-    if (sendMessage) {
-      sendMessage(message);
-    }
-  }, [trackActivity, uiState.currentMode, transitionToMode, sendMessage]);
-
-  const handleTimelineAction = useCallback(async (action: string, data: any) => {
-    await trackActivity(`timeline_${action}`, 'timeline');
-    
-    // Send to agent for processing
-    if (callAction) {
-      await callAction('editTimeline', {
-        operation: action,
-        ...data,
-      });
-    }
-  }, [callAction, trackActivity]);
-
-  const handleStoryboardAction = useCallback(async (action: string, data: any) => {
-    await trackActivity(`storyboard_${action}`, 'storyboard');
-    
-    // Send to agent for processing
-    if (agent) {
-      await agent.callAction('editStoryboard', {
-        operation: action,
-        ...data,
-      });
-    }
-  }, [agent, trackActivity]);
-
-  // Render prediction indicator
-  const renderPredictionIndicator = () => {
-    if (!uiState.predictedNext || uiState.confidence < 0.5) return null;
-
-    return (
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -20 }}
-        className="fixed top-4 right-4 bg-blue-500 text-white px-4 py-2 rounded-lg shadow-lg z-50"
-      >
-        <div className="text-sm">
-          Ready to switch to {uiState.predictedNext}?
-          <div className="w-full bg-blue-300 rounded-full h-1 mt-1">
-            <div 
-              className="bg-white h-1 rounded-full transition-all duration-1000"
-              style={{ width: `${uiState.confidence * 100}%` }}
-            />
-          </div>
-        </div>
-        <button
-          onClick={() => transitionToMode(uiState.predictedNext!, 'user accepted prediction')}
-          className="mt-2 bg-white text-blue-500 px-2 py-1 rounded text-xs"
-        >
-          Switch Now
-        </button>
-      </motion.div>
-    );
+      setUIState(prev => ({ ...prev, isTransitioning: false }));
+    }, 500);
   };
 
-  // Mode-specific navigation hints
-  const renderModeHints = () => {
-    const hints = {
-      chat: "💬 Ask me about your project or request timeline/storyboard edits",
-      timeline: "⏱️ Precision editing mode - adjust clips, timing, and effects",
-      storyboard: "🎬 Story planning mode - organize scenes and narrative flow",
-    };
+  // Predict next feature based on usage patterns
+  const predictNextFeature = async () => {
+    try {
+      const response = await fetch('/api/agent/predict-feature', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          currentContext: {
+            currentMode: uiState.mode,
+            timeInMode: Date.now() - modeStartTime,
+            recentActions: [], // Could track user actions here
+          },
+          timeSpentInCurrentFeature: Date.now() - modeStartTime,
+        }),
+      });
 
-    return (
-      <div className="bg-gray-100 px-4 py-2 text-sm text-gray-600 border-b">
-        {hints[uiState.currentMode]}
-        {uiState.predictedNext && (
-          <span className="ml-4 text-blue-600">
-            • AI suggests: {uiState.predictedNext} ({Math.round(uiState.confidence * 100)}% confidence)
-          </span>
-        )}
-      </div>
-    );
+      if (response.ok) {
+        const prediction = await response.json();
+        
+        if (prediction.shouldSuggest && prediction.confidence > 0.6) {
+          setUIState(prev => ({
+            ...prev,
+            prediction: {
+              nextMode: prediction.predictedFeature,
+              confidence: prediction.confidence,
+              reasoning: prediction.reasoning,
+            },
+            showPrediction: true,
+          }));
+
+          // Auto-hide prediction after 5 seconds
+          setTimeout(() => {
+            setUIState(prev => ({ ...prev, showPrediction: false }));
+          }, 5000);
+        }
+      }
+    } catch (error) {
+      console.error('Error predicting feature:', error);
+    }
   };
+
+  // Predict next feature periodically
+  useEffect(() => {
+    const interval = setInterval(predictNextFeature, 30000); // Every 30 seconds
+    return () => clearInterval(interval);
+  }, [uiState.mode, modeStartTime]);
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
-      {/* Connection Status */}
-      {!isConnected && (
-        <div className="bg-red-500 text-white text-center py-2">
-          Connecting to AI assistant...
-        </div>
-      )}
-
-      {/* Mode Hints */}
-      {renderModeHints()}
-
-      {/* Prediction Indicator */}
-      <AnimatePresence>
-        {renderPredictionIndicator()}
-      </AnimatePresence>
-
-      {/* Main Content Area */}
-      <div className="flex-1 flex">
-        {/* Sidebar with quick mode switcher */}
-        <AnimatePresence>
-          {uiState.sidebarOpen && (
-            <motion.div
-              initial={{ width: 0, opacity: 0 }}
-              animate={{ width: 200, opacity: 1 }}
-              exit={{ width: 0, opacity: 0 }}
-              className="bg-white border-r border-gray-200 p-4"
-            >
-              <h3 className="font-semibold mb-4">Quick Switch</h3>
-              <div className="space-y-2">
-                {(['chat', 'timeline', 'storyboard'] as EditingMode[]).map((mode) => (
-                  <button
-                    key={mode}
-                    onClick={() => transitionToMode(mode, 'manual switch')}
-                    className={`w-full text-left px-3 py-2 rounded transition-colors ${
-                      uiState.currentMode === mode
-                        ? 'bg-blue-100 text-blue-700 border border-blue-300'
-                        : 'hover:bg-gray-100'
-                    }`}
-                  >
-                    <span className="capitalize">{mode}</span>
-                    {uiState.predictedNext === mode && (
-                      <span className="ml-2 text-xs bg-blue-500 text-white px-1 rounded">
-                        predicted
-                      </span>
-                    )}
-                  </button>
-                ))}
-              </div>
-            </motion.div>
-          )}
-        </AnimatePresence>
-
-        {/* Dynamic Content Area */}
-        <div className="flex-1 relative overflow-hidden">
-          <AnimatePresence mode="wait">
-            <motion.div
-              key={uiState.currentMode}
-              initial={TRANSITION_ANIMATIONS.enter}
-              animate={TRANSITION_ANIMATIONS[uiState.currentMode]}
-              exit={TRANSITION_ANIMATIONS.exit}
-              transition={{ duration: 0.3, ease: "easeInOut" }}
-              className="absolute inset-0"
-            >
-              {uiState.currentMode === 'chat' && (
-                <ChatInterface 
-                  onMessage={handleChatMessage}
-                  onModeHint={(mode) => {
-                    if (mode !== uiState.currentMode) {
-                      setUIState(prev => ({ ...prev, predictedNext: mode, confidence: 0.6 }));
-                    }
-                  }}
-                />
-              )}
-              
-              {uiState.currentMode === 'timeline' && (
-                <TimelineEditor 
-                  onAction={handleTimelineAction}
-                  onChatRequest={() => transitionToMode('chat', 'user requested chat')}
-                />
-              )}
-              
-              {uiState.currentMode === 'storyboard' && (
-                <StoryboardEditor 
-                  onAction={handleStoryboardAction}
-                  onChatRequest={() => transitionToMode('chat', 'user requested chat')}
-                />
-              )}
-            </motion.div>
-          </AnimatePresence>
-        </div>
+    <div className="adaptive-video-editor h-screen bg-black relative overflow-hidden">
+      {/* Subtle background starfield */}
+      <div className="absolute inset-0 opacity-10">
+        <div className="stars-bg absolute inset-0" />
       </div>
 
-      {/* Status Bar */}
-      <div className="bg-gray-800 text-white px-4 py-2 flex justify-between items-center text-sm">
-        <span>Mode: {uiState.currentMode} | Activity: {userActivity.interactionCount} actions</span>
-        <span>
-          {uiState.transitionState === 'transitioning' && '🔄 Transitioning...'}
-          {uiState.transitionState === 'predicting' && '🤖 AI Learning...'}
-          {uiState.transitionState === 'stable' && '✅ Ready'}
-        </span>
+      {/* Prediction indicator */}
+      <AnimatePresence>
+        {uiState.showPrediction && uiState.prediction && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="absolute top-4 right-4 bg-white/10 backdrop-blur-md rounded-lg p-3 border border-white/20 z-50"
+          >
+            <div className="text-white/90 text-sm">
+              <div className="font-medium">Suggestion: Switch to {uiState.prediction.nextMode}</div>
+              <div className="text-white/70 text-xs mt-1">
+                {Math.round(uiState.prediction.confidence * 100)}% confidence
+              </div>
+              <button
+                onClick={() => handleModeTransition(uiState.prediction!.nextMode as any)}
+                className="mt-2 text-xs bg-white/20 hover:bg-white/30 px-2 py-1 rounded"
+              >
+                Switch Now
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Mode transition indicator */}
+      <AnimatePresence>
+        {uiState.isTransitioning && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 bg-black/50 backdrop-blur-sm z-40 flex items-center justify-center"
+          >
+            <div className="text-white text-xl font-light">
+              Switching to {uiState.mode} mode...
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Main content area */}
+      <AnimatePresence mode="wait">
+        <motion.div
+          key={uiState.mode}
+          initial={{ opacity: 0, scale: 0.95 }}
+          animate={{ opacity: 1, scale: 1 }}
+          exit={{ opacity: 0, scale: 0.95 }}
+          transition={{ duration: 0.3 }}
+          className="h-full"
+        >
+          {uiState.mode === 'chat' && (
+            <div className="h-full p-8 flex flex-col items-center justify-center">
+              <div className="glass-effect rounded-2xl p-8 max-w-2xl w-full max-h-[80vh] overflow-hidden flex flex-col">
+                <h2 className="text-2xl font-light text-white mb-6 text-center">
+                  AI Video Assistant
+                </h2>
+                
+                {/* Messages area */}
+                <div className="flex-1 overflow-y-auto mb-4 space-y-4">
+                  {messages.map((message) => (
+                    <div
+                      key={message.id}
+                      className={`p-3 rounded-lg ${
+                        message.role === 'user'
+                          ? 'bg-white/10 ml-auto max-w-[80%]'
+                          : 'bg-blue-500/20 mr-auto max-w-[80%]'
+                      }`}
+                    >
+                      <div className="text-white/90 text-sm">
+                        {message.content}
+                      </div>
+                    </div>
+                  ))}
+                  {isLoading && (
+                    <div className="bg-blue-500/20 mr-auto max-w-[80%] p-3 rounded-lg">
+                      <div className="text-white/90 text-sm">Thinking...</div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Input area */}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Describe what you want to edit..."
+                    className="flex-1 bg-white/10 border border-white/20 rounded-lg px-4 py-2 text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-blue-500/50"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && e.currentTarget.value.trim()) {
+                        onSendMessage(e.currentTarget.value);
+                        e.currentTarget.value = '';
+                      }
+                    }}
+                  />
+                  <button
+                    onClick={() => {
+                      const input = document.querySelector('input') as HTMLInputElement;
+                      if (input?.value.trim()) {
+                        onSendMessage(input.value);
+                        input.value = '';
+                      }
+                    }}
+                    className="bg-blue-500/30 hover:bg-blue-500/50 text-white px-4 py-2 rounded-lg transition-colors"
+                  >
+                    Send
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {uiState.mode === 'timeline' && <TimelineEditor />}
+          {uiState.mode === 'storyboard' && <StoryboardEditor />}
+        </motion.div>
+      </AnimatePresence>
+
+      {/* Bottom status bar */}
+      <div className="absolute bottom-4 left-4 bg-white/10 backdrop-blur-md rounded-lg px-4 py-2 border border-white/20">
+        <div className="text-white/70 text-xs">
+          Mode: {uiState.mode} | Transitions: {uiState.learningData.totalTransitions} | 
+          Time: {Math.round((Date.now() - modeStartTime) / 1000)}s
+        </div>
       </div>
     </div>
   );
-}; 
+} 

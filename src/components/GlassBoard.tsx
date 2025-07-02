@@ -3,53 +3,38 @@ import { Send } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface Message {
+  id: string;
   role: "user" | "assistant";
   content: string;
-  timestamp: Date;
+  timestamp: number;
 }
 
 interface GlassBoardProps {
-  isOpen: boolean;
-  onClose: () => void;
   onSendMessage: (message: string) => void;
   isLoading?: boolean;
   messages: Message[];
 }
 
-export function GlassBoard({ isOpen, onClose, onSendMessage, isLoading = false, messages }: GlassBoardProps) {
+export function GlassBoard({ onSendMessage, isLoading = false, messages }: GlassBoardProps) {
   const [message, setMessage] = useState('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (isOpen && textareaRef.current) {
-      // Focus the textarea when the glass board opens
-      setTimeout(() => {
-        textareaRef.current?.focus();
-      }, 100);
-    }
-  }, [isOpen]);
+    // Focus the textarea when the component mounts
+    setTimeout(() => {
+      textareaRef.current?.focus();
+    }, 100);
+  }, []);
 
   // Auto-scroll to bottom when messages change and maintain focus
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     // Maintain focus on textarea after message updates
-    if (isOpen && textareaRef.current && document.activeElement !== textareaRef.current) {
+    if (textareaRef.current && document.activeElement !== textareaRef.current) {
       textareaRef.current.focus();
     }
-  }, [messages, isOpen]);
-
-  useEffect(() => {
-    // Handle escape key to close
-    const handleEscape = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose();
-      }
-    };
-
-    document.addEventListener('keydown', handleEscape);
-    return () => document.removeEventListener('keydown', handleEscape);
-  }, [isOpen, onClose]);
+  }, [messages]);
 
   const handleSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -73,15 +58,36 @@ export function GlassBoard({ isOpen, onClose, onSendMessage, isLoading = false, 
     }
   };
 
-  if (!isOpen) return null;
-
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
-      {/* Backdrop with blur */}
-      <div 
-        className="absolute inset-0 bg-black/20 backdrop-blur-sm"
-        onClick={onClose}
-      />
+      {/* Starfield background with blur overlay */}
+      <div className="absolute inset-0 bg-black/20 backdrop-blur-sm">
+        {/* Maintain the subtle starfield in background */}
+        <div className="absolute inset-0 animate-spin" style={{ animationDuration: '240s' }}>
+          {[...Array(30)].map((_, i) => {
+            const angle = (i / 30) * 360;
+            const radius = 10 + (i % 20) * 25;
+            const size = Math.random() * 1 + 0.3;
+            const opacity = Math.random() * 0.3 + 0.1;
+            
+            return (
+              <div
+                key={i}
+                className="absolute bg-white rounded-full animate-pulse"
+                style={{
+                  left: `calc(50% + ${Math.cos(angle * Math.PI / 180) * radius}px)`,
+                  top: `calc(50% + ${Math.sin(angle * Math.PI / 180) * radius}px)`,
+                  width: `${size}px`,
+                  height: `${size}px`,
+                  opacity: opacity,
+                  animationDelay: `${Math.random() * 5}s`,
+                  animationDuration: `${Math.random() * 4 + 3}s`,
+                }}
+              />
+            );
+          })}
+        </div>
+      </div>
       
       {/* Glass board container */}
       <div className="relative w-full max-w-4xl mx-8 p-8">
@@ -100,9 +106,9 @@ export function GlassBoard({ isOpen, onClose, onSendMessage, isLoading = false, 
             <div className="flex-1 overflow-hidden relative">
               {messages.length > 0 && (
                 <div className="absolute inset-0 overflow-y-auto pr-4 space-y-6">
-                  {messages.map((msg, index) => (
+                  {messages.map((msg) => (
                     <div
-                      key={index}
+                      key={msg.id}
                       className={cn(
                         "relative",
                         msg.role === "user" ? "text-right" : "text-left"

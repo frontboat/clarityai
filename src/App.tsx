@@ -1,137 +1,153 @@
-import React, { useState, useEffect } from 'react';
-import { AdaptiveVideoEditor } from './components/AdaptiveVideoEditor';
+import React, { useState, useEffect, useRef } from 'react';
 import { GlassBoard } from './components/GlassBoard';
+import { AdaptiveVideoEditor } from './components/AdaptiveVideoEditor';
 import './index.css';
 
-function App() {
-  const [showGlassBoard, setShowGlassBoard] = useState(false);
-  const [hasEnteredApp, setHasEnteredApp] = useState(false);
-  const [messages, setMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; timestamp: Date }>>([]);
-  const [isLoading, setIsLoading] = useState(false);
+interface Message {
+  id: string;
+  role: 'user' | 'assistant';
+  content: string;
+  timestamp: number;
+}
 
+function App() {
+  const [currentView, setCurrentView] = useState<'starfield' | 'glassboard' | 'editor'>('starfield');
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [hasInteracted, setHasInteracted] = useState(false);
+
+  // Handle Ctrl+Space to open glass board
   useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.code === 'Space') {
-        e.preventDefault();
-        if (!hasEnteredApp) {
-          setShowGlassBoard(true);
-        } else {
-          setShowGlassBoard(!showGlassBoard);
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.code === 'Space') {
+        event.preventDefault();
+        if (currentView === 'starfield') {
+          setCurrentView('glassboard');
         }
       }
     };
 
-    document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [showGlassBoard, hasEnteredApp]);
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [currentView]);
 
+  // Handle chat message submission
   const handleSendMessage = async (message: string) => {
-    setIsLoading(true);
-    
-    // Add user message
-    setMessages(prev => [...prev, {
+    if (isLoading) return;
+
+    const userMessage: Message = {
+      id: `user-${Date.now()}`,
       role: 'user',
       content: message,
-      timestamp: new Date(),
-    }]);
+      timestamp: Date.now(),
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setIsLoading(true);
+
+    // Transition to editor after first interaction
+    if (!hasInteracted) {
+      setTimeout(() => {
+        setCurrentView('editor');
+        setHasInteracted(true);
+      }, 1500);
+    }
 
     try {
-      // Send to chat API
+      // Send message to chat API
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          sessionId: `glass-board-${Date.now()}`,
+          sessionId: 'default-session',
           message,
         }),
       });
 
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
       const data = await response.json();
       
-      if (data.response) {
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: data.response,
-          timestamp: new Date(),
-        }]);
-      } else {
-        throw new Error('No response from agent');
+      const assistantMessage: Message = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: data.response || 'I apologize, but I encountered an error processing your request.',
+        timestamp: Date.now(),
+      };
+
+      setMessages(prev => [...prev, assistantMessage]);
+
+      // Also send to intent analysis if we're in the editor
+      if (currentView === 'editor' || hasInteracted) {
+        try {
+          await fetch('/api/agent/analyze-intent', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              userMessage: message,
+              currentMode: 'chat',
+            }),
+          });
+        } catch (intentError) {
+          console.error('Intent analysis failed:', intentError);
+        }
       }
+
     } catch (error) {
       console.error('Error sending message:', error);
-      setMessages(prev => [...prev, {
+      
+      const errorMessage: Message = {
+        id: `error-${Date.now()}`,
         role: 'assistant',
         content: 'Sorry, I encountered an error. Please try again.',
-        timestamp: new Date(),
-      }]);
+        timestamp: Date.now(),
+      };
+
+      setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleCloseGlassBoard = () => {
-    setShowGlassBoard(false);
-    if (!hasEnteredApp) {
-      setHasEnteredApp(true);
-    }
-  };
-
-  // Initial state: black background with floating stars
-  if (!hasEnteredApp && !showGlassBoard) {
-    return (
-      <div className="h-screen w-screen bg-black flex items-center justify-center relative overflow-hidden">
-        {/* Floating stars effect */}
-        <div className="absolute inset-0">
-          {[...Array(50)].map((_, i) => (
-            <div
-              key={i}
-              className="absolute bg-white rounded-full opacity-70 animate-pulse"
-              style={{
-                left: `${Math.random() * 100}%`,
-                top: `${Math.random() * 100}%`,
-                width: `${Math.random() * 3 + 1}px`,
-                height: `${Math.random() * 3 + 1}px`,
-                animationDelay: `${Math.random() * 2}s`,
-                animationDuration: `${Math.random() * 3 + 2}s`,
-              }}
-            />
-          ))}
-        </div>
-        
-        {/* Center content */}
-        <div className="text-center z-10">
-          <h1 className="text-4xl font-light text-white/90 mb-4">ClarityAI</h1>
-          <p className="text-white/60 text-lg mb-8">Adaptive Video Editing Assistant</p>
-          <div className="text-white/40 text-sm">
-            Press <kbd className="px-2 py-1 bg-white/10 rounded">Ctrl</kbd> + <kbd className="px-2 py-1 bg-white/10 rounded">Space</kbd> to begin
+  return (
+    <div className="app">
+      {currentView === 'starfield' && (
+        <div className="starfield-container h-screen bg-black relative overflow-hidden flex items-center justify-center">
+          {/* Starfield animation */}
+          <div className="absolute inset-0">
+            <div className="stars-bg absolute inset-0" />
+          </div>
+          
+          {/* Ctrl+Space instruction */}
+          <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2">
+            <div className="text-white/60 text-sm font-light tracking-wider">
+              Press <span className="text-white/80 font-medium">Ctrl + Space</span> to begin
+            </div>
           </div>
         </div>
+      )}
 
+      {currentView === 'glassboard' && (
         <GlassBoard
-          isOpen={showGlassBoard}
-          onClose={handleCloseGlassBoard}
           onSendMessage={handleSendMessage}
           isLoading={isLoading}
           messages={messages}
         />
-      </div>
-    );
-  }
+      )}
 
-  // After entering app: show adaptive video editor with optional glass board overlay
-  return (
-    <div className="App">
-      <AdaptiveVideoEditor />
-      
-      <GlassBoard
-        isOpen={showGlassBoard}
-        onClose={handleCloseGlassBoard}
-        onSendMessage={handleSendMessage}
-        isLoading={isLoading}
-        messages={messages}
-      />
+      {currentView === 'editor' && (
+        <AdaptiveVideoEditor
+          onSendMessage={handleSendMessage}
+          messages={messages}
+          isLoading={isLoading}
+        />
+      )}
     </div>
   );
 }
