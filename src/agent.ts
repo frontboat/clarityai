@@ -12,7 +12,7 @@ const env = validateEnv(
 // Configuration that will be set from server
 let agentConfig = {
   apiKey: env.OPENROUTER_API_KEY,
-  model: 'anthropic/claude-3.7-sonnet',
+  model: 'google/gemini-2.0-flash-001',
 };
 
 // Function to initialize agent configuration (called from server)
@@ -96,6 +96,12 @@ Timeline: ${(state.memory.projectData as any).timeline.clips.length} clips
 Storyboard: ${(state.memory.projectData as any).storyboard.scenes.length} scenes
 Current Tool: ${(state.memory.editingState as any).currentTool}
     `.trim();
+  },
+
+  async onStep(ctx) {
+    if (ctx.memory) {
+      latestMemoryState = { ...ctx.memory };
+    }
   },
 
   inputs: {
@@ -415,18 +421,54 @@ const clarityAgent = createDreams({
       name: "editStoryboard", 
       description: "Perform storyboard editing operations",
       schema: z.object({
-        operation: z.enum(["add-scene", "connect-scenes", "add-note", "reorder"]),
+        operation: z.enum(["add-scene", "connect-scenes", "add-note", "reorder", "update-scene", "delete-scene", "move-scene"]),
         sceneId: z.string().optional(),
         data: z.object({}).passthrough(),
       }),
-      handler: async ({ operation, sceneId, data }, ctx) => {
+      handler: async ({ operation, sceneId, data }, ctx: any) => {
         console.log(`🎬 Storyboard operation: ${operation} ${sceneId ? `on scene ${sceneId}` : ''}`);
-        return { success: true, operation, sceneId };
+        
+        if (!ctx.memory.projectData.storyboard) {
+          ctx.memory.projectData.storyboard = { scenes: [], connections: [], notes: [] };
+        }
+        const { scenes } = ctx.memory.projectData.storyboard;
+
+        switch (operation) {
+          case 'add-scene':
+            scenes.push(data.scene);
+            break;
+          case 'delete-scene':
+            ctx.memory.projectData.storyboard.scenes = scenes.filter((s: any) => s.id !== sceneId);
+            break;
+          case 'update-scene':
+            ctx.memory.projectData.storyboard.scenes = scenes.map((s: any) => 
+              s.id === sceneId ? { ...s, ...data.updates } : s
+            );
+            break;
+          case 'move-scene':
+             ctx.memory.projectData.storyboard.scenes = scenes.map((s: any) =>
+              s.id === sceneId ? { ...s, position: data.position } : s
+            );
+            break;
+          case 'connect-scenes':
+            ctx.memory.projectData.storyboard.scenes = scenes.map((s: any) =>
+              s.id === data.from ? { ...s, connections: [...s.connections, data.to] } : s
+            );
+            break;
+        }
+
+        return { success: true, operation, sceneId, newSceneCount: scenes.length };
       },
     }),
   ],
 });
 
+// This will hold the latest memory state for the frontend to poll
+let latestMemoryState: any = {
+  projectData: {
+    storyboard: { scenes: [], connections: [], notes: [] }
+  }
+};
 
 // Initialize the agents
 let agentStarted = false;
@@ -518,6 +560,9 @@ export function getUICommands(): any[] {
 
 // Export function to get current UI state
 export function getCurrentUIState() {
-  return { ...currentUIState };
+  return { 
+    ...currentUIState,
+    projectData: latestMemoryState?.projectData 
+  };
 }
 
